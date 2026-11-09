@@ -42,3 +42,51 @@ button {
 button:hover {
   background-color: #1a237e;
 }
+
+.form-grid label {
+  display: flex;
+  flex-direction: column;
+}
+
+input,
+select {
+  min-width: 0;
+}
+
+.task {
+  background: #fff;
+  padding: 16px;
+  margin-bottom: 12px;
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  overflow-wrap: anywhere;
+}
+
+.task h4 {
+  margin: 0 0 8px;
+}
+
+.task p {
+  margin: 0 0 12px;
+  white-space: pre-wrap;
+}
+
+.status {
+  display: inline-block;
+  padding: 4px 10px;
+  background: #eef0ff;
+  border-radius: 12px;
+}
+
+.date-budget {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 12px;
+  color: #555;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
