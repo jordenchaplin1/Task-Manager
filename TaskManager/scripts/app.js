@@ -1,8 +1,32 @@
 const serverName =
   "https://106api-b0bnggbsgnezbzcz.westus3-01.azurewebsites.net/api/tasks";
 
+// Keep this value the same so your saved tasks remain associated with you.
+const currentUser = "jorden-chaplin";
+
+let myTasks = [];
+let busy = false;
+let tasksLoaded = false;
+
+function getTaskId(task) {
+  return task.id ?? task._id;
+}
+
+function updateButtons() {
+  $("#btnSave").prop("disabled", busy);
+
+  const missingId = myTasks.some(function (task) {
+    const id = getTaskId(task);
+    return id === undefined || id === null || id === "";
+  });
+
+  $("#btnDeleteAll").prop(
+    "disabled",
+    busy || !tasksLoaded || myTasks.length === 0 || missingId
+  );
+}
+
 function displayTask(task) {
-  // Build elements with .text() so task text is displayed safely.
   const container = $("<div>").addClass("task");
 
   const color = /^#[0-9a-f]{6}$/i.test(task.color)
@@ -13,16 +37,18 @@ function displayTask(task) {
 
   const info = $("<div>").addClass("info");
 
-  info.append($("<h4>").text(task.title));
-  info.append($("<p>").text(task.desc || ""));
+  info.append(
+    $("<h4>").text(task.title || "Untitled task"),
+    $("<p>").text(task.desc || "")
+  );
 
   const status = $("<span>")
     .addClass("status")
     .text(task.status || "New");
 
-  const details = $("<div>").addClass("date-budget");
-
   const budget = Number(task.budget);
+
+  const details = $("<div>").addClass("date-budget");
 
   details.append(
     $("<span>").text(`Due: ${task.date || "No date selected"}`),
@@ -35,8 +61,66 @@ function displayTask(task) {
   $("#list").append(container);
 }
 
-function saveTask(event) {
+function renderTasks() {
+  $("#list").empty();
+  myTasks.forEach(displayTask);
+}
+
+async function loadTasks() {
+  busy = true;
+  tasksLoaded = false;
+  updateButtons();
+  $("#message").text("Loading your tasks...");
+
+  try {
+    let response = await $.ajax({
+      type: "GET",
+      url: serverName,
+      dataType: "json",
+      timeout: 20000
+    });
+
+    if (typeof response === "string") {
+      response = JSON.parse(response);
+    }
+
+    if (!Array.isArray(response)) {
+      throw new Error("The API did not return an array of tasks.");
+    }
+
+    // Display only tasks associated with this user.
+    myTasks = response.filter(function (task) {
+      return task && task.user === currentUser;
+    });
+
+    tasksLoaded = true;
+    renderTasks();
+
+    $("#message").text(
+      myTasks.length
+        ? `${myTasks.length} task(s) loaded.`
+        : "No tasks yet. Add your first task above."
+    );
+
+    return true;
+  } catch (error) {
+    console.error("Loading tasks failed:", error);
+
+    $("#message").text(
+      "Could not load your tasks. Refresh the page to try again."
+    );
+
+    return false;
+  } finally {
+    busy = false;
+    updateButtons();
+  }
+}
+
+async function saveTask(event) {
   event.preventDefault();
+
+  if (busy) return;
 
   const title = $("#txtTitle").val().trim();
   const desc = $("#txtDescription").val().trim();
@@ -46,123 +130,124 @@ function saveTask(event) {
   const budget = Number($("#numBudget").val() || 0);
 
   if (!title) {
-    alert("Please enter a task title.");
+    $("#message").text("Please enter a task title.");
     $("#txtTitle").focus();
     return;
   }
 
   if (!Number.isFinite(budget) || budget < 0) {
-    alert("Please enter a valid budget of zero or more.");
+    $("#message").text("Enter a budget of zero or more.");
     return;
   }
 
-  // Create the task object using the Task class.
-  const taskToSave = new Task(
+  const task = new Task(
     title,
     desc,
     color,
     date,
     status,
-    budget
+    budget,
+    currentUser
   );
 
-  $("#btnSave").prop("disabled", true).text("Saving...");
+  busy = true;
+  updateButtons();
+  $("#btnSave").text("Saving...");
+  $("#message").text("Saving your task...");
 
-  // Save the task on the server.
-  $.ajax({
-    type: "POST",
-    url: serverName,
-    data: JSON.stringify(taskToSave),
-    contentType: "application/json",
+  try {
+    await $.ajax({
+      type: "POST",
+      url: serverName,
+      data: JSON.stringify(task),
+      contentType: "application/json",
+      timeout: 20000
+    });
+  } catch (error) {
+    console.error("Saving task failed:", error);
 
-    success: function () {
-      // Display only after the server confirms the save.
-      displayTask(taskToSave);
+    $("#message").text(
+      "Could not confirm the save. Refresh to check before trying again."
+    );
 
-      $("#taskForm")[0].reset();
-      $("#txtTitle").focus();
-      $("#message").text("Task saved successfully.");
-    },
+    busy = false;
+    $("#btnSave").text("Save Task");
+    updateButtons();
+    return;
+  }
 
-    error: function (xhr) {
-      console.error("Saving failed:", xhr.status, xhr.responseText);
-      $("#message").text(
-        "Could not save your task. Your entries are still in the form."
-      );
-    },
+  $("#taskForm")[0].reset();
 
-    complete: function () {
-      $("#btnSave").prop("disabled", false).text("Save Task");
-    }
-  });
+  // Reload to get the saved task and its server-generated ID.
+  const loaded = await loadTasks();
+
+  $("#message").text(
+    loaded
+      ? "Task saved successfully."
+      : "Task saved, but the list could not refresh. Refresh the page."
+  );
+
+  $("#btnSave").text("Save Task");
+  $("#txtTitle").focus();
 }
 
-function loadTasks() {
-  $("#message").text("Loading tasks...");
-  $("#btnSave").prop("disabled", true);
+async function deleteAllTasks() {
+  if (busy || !tasksLoaded || myTasks.length === 0) return;
 
-  // Retrieve previously saved tasks.
-  $.ajax({
-    type: "GET",
-    url: serverName,
-    dataType: "json",
+  const confirmed = window.confirm(
+    `Delete all ${myTasks.length} of your tasks? This cannot be undone.`
+  );
 
-    success: function (response) {
-      // Some APIs return JSON as an encoded string.
-      let tasks = response;
+  if (!confirmed) return;
 
-      if (typeof tasks === "string") {
-        try {
-          tasks = JSON.parse(tasks);
-        } catch (error) {
-          $("#message").text("The server returned invalid task data.");
-          return;
-        }
-      }
+  // Delete only the current user's tasks, using individual IDs.
+  const tasksToDelete = myTasks.slice();
 
-      if (!Array.isArray(tasks)) {
-        console.error("Unexpected response:", tasks);
-        $("#message").text("The server did not return a task list.");
-        return;
-      }
+  busy = true;
+  updateButtons();
+  $("#message").text("Deleting your tasks...");
 
-      $("#list").empty();
+  let deleted = 0;
+  let failed = 0;
 
-      tasks.forEach(function (task) {
-        if (task && typeof task === "object") {
-          displayTask(task);
-        }
+  for (const task of tasksToDelete) {
+    const id = getTaskId(task);
+
+    try {
+      await $.ajax({
+        type: "DELETE",
+        url: `${serverName}/${encodeURIComponent(id)}`,
+        timeout: 20000
       });
 
-      $("#message").text(
-        tasks.length ? "" : "No tasks yet. Create your first task above."
-      );
-    },
-
-    error: function (xhr) {
-      console.error("Loading failed:", xhr.status, xhr.responseText);
-      $("#message").text(
-        "Could not load tasks. Check your connection and refresh to retry."
-      );
-    },
-
-    complete: function () {
-      $("#btnSave").prop("disabled", false);
+      deleted++;
+    } catch (error) {
+      console.error("Deleting task failed:", id, error);
+      failed++;
     }
-  });
+  }
+
+  const loaded = await loadTasks();
+
+  if (!loaded) {
+    $("#message").text(
+      `Deleted ${deleted} task(s); ${failed} request(s) failed. ` +
+      "Refresh to check the latest server list."
+    );
+  } else if (failed > 0) {
+    $("#message").text(
+      `Deleted ${deleted} task(s). ${failed} could not be deleted.`
+    );
+  } else {
+    $("#message").text("All your tasks were deleted.");
+  }
 }
 
 function init() {
-  // Add an accessible area for loading, success, and error messages.
-  $("<p>", {
-    id: "message",
-    role: "status",
-    "aria-live": "polite"
-  }).insertBefore("#list");
-
+  // jQuery handles the form and button events.
   $("#taskForm").on("submit", saveTask);
+  $("#btnDeleteAll").on("click", deleteAllTasks);
 
-  // Display all saved tasks when the page loads.
   loadTasks();
 }
 
